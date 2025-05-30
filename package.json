@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "send": "ts-node send.ts",
     "logger": "ts-node logReceiver.ts",
     "receiver": "ts-node alertReceiver.ts",
     "send-air-quality": "ts-node sendAirQuality.ts",
