@@ -1,6 +1,11 @@
 **Requirements**
 
 - Node 22
+- Docker
+
+**Docker**
+
+Run ```docker compose up -d```
 
 **Running the code**
 
