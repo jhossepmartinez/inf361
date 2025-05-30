@@ -1,0 +1,29 @@
+{
+  "name": "inf361",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "send": "ts-node send.ts",
+    "logger": "ts-node logReceiver.ts",
+    "receiver": "ts-node alertReceiver.ts",
+    "send-air-quality": "ts-node sendAirQuality.ts",
+    "send-door-window": "ts-node sendDoorWindow.ts",
+    "send-fire": "ts-node sendFire.ts",
+    "send-gas": "ts-node sendGas.ts",
+    "send-humidity": "ts-node sendHumidity.ts",
+    "send-noise": "ts-node sendNoise.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@types/amqplib": "^0.10.7",
+    "amqplib": "^0.10.8",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  }
+}

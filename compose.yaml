@@ -1,0 +1,10 @@
+services:
+  rabbitmq:
+    image: rabbitmq:alpine
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - 5672:5672
+    environment:
+      - RABBITMQ_DEFAULT_USER=jhossep
+      - RABBITMQ_DEFAULT_PASS=jhossep
