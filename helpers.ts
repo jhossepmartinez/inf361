@@ -3,6 +3,37 @@ import { clear } from "console";
 import { AMQP_URL, QUEUE_NAME } from "./constant";
 import { Sensor } from "./types";
 
+const DAY_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]; // 7AM to 7PM
+const NIGHT_HOURS = [20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6]; // 8PM to 6AM
+const NOISE_RANGES = {
+  day: { min: 30, max: 90 }, // Higher max during day
+  night: { min: 30, max: 70 } // Lower max at night
+};
+
+let currentTime = {
+  hour: new Date().getHours(),
+  isDay: DAY_HOURS.includes(new Date().getHours()),
+  formatted: formatTime(new Date())
+};
+
+function formatTime(date: Date): string {
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+setInterval(() => {
+  const now = new Date();
+  currentTime = {
+    hour: now.getHours(),
+    isDay: DAY_HOURS.includes(now.getHours()),
+    formatted: formatTime(now)
+  };
+  updateDisplay(); // Refresh display when time changes
+}, 5000);
+
+
 export const sendMessage = async (message: Sensor) => {
   const connection = await connect(AMQP_URL);
   const channel = await connection.createChannel();
@@ -43,39 +74,64 @@ const sensorData: SensorData = {
   door_window: [],
 };
 
-// Valid ranges for each sensor type (last 5 values)
 const validRanges = {
-  air_quality: { min: 300, max: 1000 }, // CO2 ppm
-  gas: { min: 0, max: 50 }, // Methane ppm
-  fire: { min: 15, max: 35 }, // Temperature °C
-  noise: { min: 30, max: 70 }, // dB
-  humidity: { min: 20, max: 80 }, // Percentage
+  air_quality: { min: 300, max: 1000 },
+  gas: { min: 0, max: 50 },
+  fire: { min: 15, max: 35 },
+  noise: currentTime.isDay ? NOISE_RANGES.day : NOISE_RANGES.night,
+  humidity: { min: 20, max: 80 },
 };
 
 const isNumber = (value: unknown): value is number => typeof value === "number";
 
 const activeAlerts: string[] = [];
 
+// Modify the updateDisplay function
 function updateDisplay() {
   clear();
-  console.log("📡 REAL-TIME SENSOR MONITORING 📡\n");
+  
+  // Update noise range based on current time
+  validRanges.noise = currentTime.isDay ? NOISE_RANGES.day : NOISE_RANGES.night;
+  
+  console.log(`📡 REAL-TIME SENSOR MONITORING 📡 [${currentTime.formatted}]`);
+  console.log(`🌞 Current mode: ${currentTime.isDay ? 'DAY' : 'NIGHT'}\n`);
 
-  if (activeAlerts.length === 0) {
-    console.log("✅ All systems normal\n");
-    console.log("Waiting for sensor data...");
-    return;
+  // Filter alerts based on time of day
+  const filteredAlerts = activeAlerts.filter(alert => {
+    if (alert.includes("Puerta/Ventana") || alert.includes("Door/Window")) {
+      return !currentTime.isDay; // Only show door/window alerts at night
+    }
+    return true; // Show all other alerts
+  });
+
+  // Separate critical alerts from warnings
+  const criticalAlerts = filteredAlerts.filter(a => a.includes("🚨") || a.includes("💀"));
+  const warningAlerts = filteredAlerts.filter(a => !a.includes("🚨") && !a.includes("💀"));
+
+  if (criticalAlerts.length > 0) {
+    console.log("🚨🚨🚨 CRITICAL ALERTS 🚨🚨🚨\n");
+    criticalAlerts.forEach((alert) => console.log(alert));
+    console.log("");
   }
 
-  console.log("🚨 ACTIVE ALERTS 🚨\n");
-  activeAlerts.forEach((alert) => console.log(alert));
+  if (warningAlerts.length > 0) {
+    console.log("⚠️⚠️⚠️ WARNING ALERTS ⚠️⚠️⚠️\n");
+    warningAlerts.forEach((alert) => console.log(alert));
+    console.log("");
+  }
+
+  if (filteredAlerts.length === 0) {
+    console.log("✅ All systems normal\n");
+  }
 
   // Display last known values
-  console.log("\n📊 Last Sensor Readings:");
+  console.log("📊 Last Sensor Readings:");
   Object.entries(sensorData).forEach(([type, values]) => {
     if (values.length > 0) {
       const lastValue = values[values.length - 1];
       console.log(
-        `- ${type.padEnd(15)}: ${lastValue}${type === "door_window" ? "" : getUnit(type)}`,
+        `- ${type.padEnd(15)}: ${lastValue}${type === "door_window" ? "" : getUnit(type)}` +
+        (type === "noise" ? ` (${currentTime.isDay ? 'Day' : 'Night'} range: ${validRanges.noise.min}-${validRanges.noise.max}dB)` : '')
       );
     }
   });
@@ -111,15 +167,13 @@ export const alertReceiver = async () => {
     if (type === "door_window") {
       if (typeof value === "boolean") {
         sensorData.door_window.push(value);
-        const alertMsg = "🚪 INTRUDER ALERT: Door/window opened!";
         if (value) {
+          const alertMsg = "🚨 Alarma + Carabineros (Puerta/Ventana abierta)";
           if (!activeAlerts.includes(alertMsg)) {
             activeAlerts.push(alertMsg);
           }
         } else {
-          const index = activeAlerts.findIndex((a) =>
-            a.includes("INTRUDER ALERT"),
-          );
+          const index = activeAlerts.findIndex(a => a.includes("Puerta/Ventana"));
           if (index >= 0) activeAlerts.splice(index, 1);
         }
       }
@@ -127,40 +181,58 @@ export const alertReceiver = async () => {
       if (typeof value === "number") {
         sensorData[type].push(value);
 
-        // Check last 5 values
-        const lastFive = sensorData[type].slice(-5);
         const range = validRanges[type];
-        const invalidCount = lastFive.filter(
-          (v) => v < range.min || v > range.max,
-        ).length;
+        const isOutOfRange = value < range.min || value > range.max;
 
-        const alertPrefix = `⚠️ ${type.toUpperCase().padEnd(12)}:`;
+        if (isOutOfRange) {
+          let alertMsg = "";
+          
+          switch(type) {
+            case "gas":
+              alertMsg = "⚠️ Cierre válvula de gas";
+              if (value > 1000) {
+                alertMsg = "💀 CRITICAL: " + alertMsg + " (Fuga grave detectada)";
+              }
+              break;
+            case "air_quality":
+              alertMsg = "⚠️ Activar sistema de ventilación";
+              break;
+            case "fire":
+              alertMsg = "🚨 Alarma + Bomberos (Temperatura crítica)";
+              break;
+            case "noise":
+      const noiseRange = currentTime.isDay ? NOISE_RANGES.day : NOISE_RANGES.night;
+      if (value > noiseRange.max) {
+        alertMsg = `⚠️ Notificar exceso de ruido (${value}dB durante ${currentTime.isDay ? 'el día' : 'la noche'})`;
+      }
+      break;
+            case "humidity":
+              // No specific action for humidity in requirements
+              alertMsg = `⚠️ Humedad fuera de rango (${value}%)`;
+              break;
+          }
 
-        if (invalidCount > 0) {
-          const alertMsg = `${alertPrefix} ${invalidCount}/5 readings out of range (${range.min}-${range.max}${getUnit(type)})`;
-
-          const existingIndex = activeAlerts.findIndex((a) =>
-            a.startsWith(alertPrefix),
-          );
+          const existingIndex = activeAlerts.findIndex(a => a.includes(alertMsg.split(':')[0] ?? alertMsg));
           if (existingIndex >= 0) {
             activeAlerts[existingIndex] = alertMsg;
-          } else {
+          } else if (alertMsg) {
             activeAlerts.push(alertMsg);
           }
-
-          if (type === "gas" && value > 1000) {
-            const criticalMsg =
-              "💀 CRITICAL: Gas leak detected! EVACUATE IMMEDIATELY!";
-            if (!activeAlerts.includes(criticalMsg)) {
-              activeAlerts.push(criticalMsg);
-            }
-          }
         } else {
-          const alertIndex = activeAlerts.findIndex((a) =>
-            a.startsWith(alertPrefix),
-          );
-          if (alertIndex >= 0) {
-            activeAlerts.splice(alertIndex, 1);
+          // Remove alert if value is back to normal
+          const alertPrefix = {
+            gas: "Cierre válvula",
+            air_quality: "Activar sistema",
+            fire: "Alarma + Bomberos",
+            noise: "Notificar exceso",
+            humidity: "Humedad fuera"
+          }[type];
+          
+          if (alertPrefix) {
+            const alertIndex = activeAlerts.findIndex(a => a.includes(alertPrefix));
+            if (alertIndex >= 0) {
+              activeAlerts.splice(alertIndex, 1);
+            }
           }
         }
       }
